@@ -1,0 +1,11 @@
+rgname = "my-dev-rg-001"
+location = "West europe"
+vnetname = "dev-vnet-001"
+subnetname = "dev-subnet-001"
+address_space = ["10.0.0.0/16"]
+address_prefixes = ["10.0.1.0/24"]
+acrname = "containerResistry1"
+sku = "Premium"
+admin_enabled = false
+aksname = "my-dev-aks-001"
+dns_prefix = "devaksdns1"
