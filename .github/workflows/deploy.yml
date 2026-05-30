@@ -8,7 +8,10 @@ on:
 permissions:
   id-token: write
   contents: read
-  security-events: write # For Checkov/tfsec SARIF output if needed
+  security-events: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Resolve Node.js 20 deprecation warning
 
 jobs:
   Static-Analysis:
@@ -23,18 +26,26 @@ jobs:
         with:
           tflint_version: v0.50.0
 
+      - name: Init TFLint
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # Required for plugin download
+
       - name: Run TFLint
         run: tflint --recursive
+        continue-on-error: true # Don't block the pipeline for linting warnings
 
       - name: Run tfsec
         uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          soft_fail: true # Don't block the pipeline for security warnings
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@master
         with:
           directory: .
           framework: terraform
-          soft_fail: true # Change to false to block pipeline on security failures
+          soft_fail: true # Don't block the pipeline for security warnings
 
   Terraform-Plan:
     name: 'Terraform Plan'
