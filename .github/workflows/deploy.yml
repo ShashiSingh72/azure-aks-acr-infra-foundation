@@ -1,3 +1,4 @@
+# Triggering new run to verify Azure Federated Identity
 name: 'Terraform Secure Deploy'
 
 on:
