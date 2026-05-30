@@ -1,4 +1,4 @@
-name: 'Terraform Deploy'
+name: 'Terraform Secure Deploy'
 
 on:
   push:
@@ -6,14 +6,40 @@ on:
   pull_request:
 
 permissions:
-  id-token: write # Required for OIDC
+  id-token: write
   contents: read
+  security-events: write # For Checkov/tfsec SARIF output if needed
 
 jobs:
-  terraform:
-    name: 'Terraform'
+  Static-Analysis:
+    name: 'Security Scanning'
     runs-on: ubuntu-latest
-    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.0
+
+      - name: Run TFLint
+        run: tflint --recursive
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true # Change to false to block pipeline on security failures
+
+  Terraform-Plan:
+    name: 'Terraform Plan'
+    needs: Static-Analysis
+    runs-on: ubuntu-latest
     env:
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -25,38 +51,81 @@ jobs:
         working-directory: ./environments/dev
 
     steps:
-    # Checkout the repository to the GitHub Actions runner
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    # Login to Azure using OIDC
-    - name: Azure Login
-      uses: azure/login@v2
-      with:
-        client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    # Install the latest version of Terraform CLI
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.5.0
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-    # Initialize a new or existing Terraform working directory
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="resource_group_name=${{ secrets.BACKEND_AZURE_RESOURCE_GROUP }}" \
-          -backend-config="storage_account_name=${{ secrets.BACKEND_AZURE_STORAGE_ACCOUNT }}" \
-          -backend-config="container_name=${{ secrets.BACKEND_AZURE_STORAGE_CONTAINER }}" \
-          -backend-config="key=terraform.tfstate"
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.BACKEND_AZURE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.BACKEND_AZURE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.BACKEND_AZURE_STORAGE_CONTAINER }}" \
+            -backend-config="key=terraform.tfstate"
 
-    # Generates an execution plan for Terraform
-    - name: Terraform Plan
-      run: terraform plan -input=false
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -input=false -out=tfplan
 
-      # On push to "main", build or change infrastructure according to Terraform configuration files
-    - name: Terraform Apply
-      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      run: terraform apply -auto-approve -input=false
+      # Store the plan to be used in Apply stage
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ./environments/dev/tfplan
+
+  Terraform-Apply:
+    name: 'Terraform Apply'
+    needs: Terraform-Plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: 'production' # This environment should have "Required Reviewers" enabled in GitHub Settings
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_USE_OIDC: true
+
+    defaults:
+      run:
+        working-directory: ./environments/dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: ./environments/dev
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.BACKEND_AZURE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.BACKEND_AZURE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.BACKEND_AZURE_STORAGE_CONTAINER }}" \
+            -backend-config="key=terraform.tfstate"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
