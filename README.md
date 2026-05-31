@@ -12,6 +12,49 @@ The infrastructure is modularized for reusability:
 
 ---
 
+## 🗺️ CI/CD Workflow Diagram
+
+```mermaid
+graph TD
+    A[Push to main] --> B{Static Analysis}
+    B -->|TFLint| C[Linter Pass]
+    B -->|tfsec| D[Security Scan Pass]
+    B -->|Checkov| E[Configuration Pass]
+    C & D & E --> F[Terraform Plan]
+    F --> G[Upload Plan Artifact]
+    G --> H{Manual Approval}
+    H -->|Approved| I[Terraform Apply]
+    H -->|Rejected| J[Pipeline Cancelled]
+    I --> K[Azure Resources Deployed]
+```
+
+## 📂 Project Structure
+
+```text
+K8S_code/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml          # Multi-stage CI/CD Pipeline
+├── backend_setup/
+│   └── main.tf                 # One-time setup for TF Remote Backend
+├── environments/
+│   └── dev/
+│       ├── main.tf             # Dev Environment root module
+│       ├── provider.tf         # Azure & Backend configuration
+│       ├── terraform.tfvars    # Environment variables
+│       └── variable.tf         # Variable declarations
+├── modules/
+│   ├── acr/                    # Azure Container Registry module
+│   ├── aks/                    # Azure Kubernetes Service module
+│   ├── network/                # VNet & Subnet module
+│   └── resource_group/         # Resource Group module
+├── .gitignore                  # Git ignore rules
+├── .tflint.hcl                 # TFLint configuration
+└── README.md                   # Documentation
+```
+
+---
+
 ## 🚀 Deployment Pipeline
 
 The pipeline is designed with security and best practices in mind:
